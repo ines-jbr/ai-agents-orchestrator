@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from dotenv import load_dotenv
 from datetime import datetime
 import uuid
+from app.worker.producer import publish_job
+import asyncio
 
 from app.schemas import (
     UserRequest, JobResponse,
@@ -101,19 +103,13 @@ def health_check():
     status_code=201,
     tags=["Requests"]
 )
-def create_request(
+async def create_request(
     request: UserRequest,
     background_tasks: BackgroundTasks
 ):
     """
     Soumet une demande d'infrastructure.
-
-    - Crée un job avec statut **PENDING**
-    - Lance l'orchestrateur en **arrière-plan**
-    - Retourne un **job_id** immédiatement
-
-    Utilise ensuite **GET /requests/{job_id}**
-    pour suivre le statut.
+    Publie le job dans RabbitMQ.
     """
     job_id = str(uuid.uuid4())
 
@@ -128,12 +124,8 @@ def create_request(
         "updated_at" : None,
     }
 
-    # ── Lancer l'orchestrateur en arrière-plan ──
-    background_tasks.add_task(
-        process_job,
-        job_id,
-        request.model_dump()
-    )
+    # ── Publier dans RabbitMQ directement ──
+    await publish_job(job_id, request.model_dump())
 
     print(f"\n📥 Nouvelle requête → job_id: {job_id[:8]}...")
 
@@ -142,7 +134,6 @@ def create_request(
         status     = JobStatus.PENDING,
         created_at = fake_db[job_id]["created_at"]
     )
-
 
 @app.get(
     "/requests/{job_id}",
